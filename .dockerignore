@@ -1,0 +1,11 @@
+**/bin/
+**/obj/
+**/node_modules/
+frontend/dist/
+.git/
+.vs/
+.idea/
+docs/
+*.pdf
+*.md
+TestResults/

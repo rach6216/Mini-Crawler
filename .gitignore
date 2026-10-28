@@ -1,0 +1,13 @@
+bin/
+obj/
+*.user
+*.suo
+.vs/
+.idea/
+TestResults/
+*.trx
+node_modules/
+frontend/dist/
+.env
+*.log
+.DS_Store

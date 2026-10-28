@@ -1,0 +1,97 @@
+name: crawler
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-crawler}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crawler}
+      POSTGRES_DB: ${POSTGRES_DB:-crawler}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - crawler-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-crawler} -d ${POSTGRES_DB:-crawler}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: deploy/api.Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=${POSTGRES_DB:-crawler};Username=${POSTGRES_USER:-crawler};Password=${POSTGRES_PASSWORD:-crawler}"
+      RabbitMq__Host: rabbitmq
+      RabbitMq__UserName: ${RABBITMQ_USER:-guest}
+      RabbitMq__Password: ${RABBITMQ_PASSWORD:-guest}
+      Database__MigrateOnStartup: "true"
+      # The fixture site lives on the private Docker network; it is the only host exempt from the SSRF policy.
+      Crawler__Security__TrustedHosts__0: fixture-site
+      Cors__AllowedOrigins__0: http://localhost:${FRONTEND_PORT:-3000}
+      Cors__AllowedOrigins__1: http://localhost:5173
+    ports:
+      - "${API_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: deploy/worker.Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=${POSTGRES_DB:-crawler};Username=${POSTGRES_USER:-crawler};Password=${POSTGRES_PASSWORD:-crawler}"
+      RabbitMq__Host: rabbitmq
+      RabbitMq__UserName: ${RABBITMQ_USER:-guest}
+      RabbitMq__Password: ${RABBITMQ_PASSWORD:-guest}
+      Crawler__Security__TrustedHosts__0: fixture-site
+    ports:
+      - "${WORKER_PORT:-8081}:8081"
+    depends_on:
+      # The API applies migrations; the worker also waits for the schema itself before consuming.
+      api:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: .
+      dockerfile: deploy/frontend.Dockerfile
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    depends_on:
+      - api
+
+  # Deterministic crawl target for demos and end-to-end checks: http://fixture-site/ from inside the
+  # network, http://localhost:8090/ from the host.
+  fixture-site:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./tests/fixtures/site:/usr/share/nginx/html:ro
+      - ./deploy/fixture-site/default.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "${FIXTURE_PORT:-8090}:80"
+
+volumes:
+  crawler-pgdata:

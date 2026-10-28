@@ -26,6 +26,10 @@ public sealed record CrawlSnapshot(CrawlJob Job, IReadOnlyList<CrawlPage> Pages,
 
     public static string Url(string path) => new Uri(new Uri(WorkerTestServices.StartUrl), path).AbsoluteUri;
 
+    // On Linux a rooted path such as "/d.html" parses as an absolute file:// URI, so the scheme must be
+    // checked explicitly; otherwise site-relative paths would never resolve against the start URL there.
     private static string ResolveTarget(string target) =>
-        Uri.TryCreate(target, UriKind.Absolute, out var absolute) ? absolute.AbsoluteUri : Url(target);
+        Uri.TryCreate(target, UriKind.Absolute, out var absolute) && UrlNormalizer.IsSupportedScheme(absolute)
+            ? absolute.AbsoluteUri
+            : Url(target);
 }

@@ -1,0 +1,5 @@
+# Fixture robots.txt: everything is allowed except one page of the /robots/ subsite.
+User-agent: *
+Disallow: /robots/blocked.html
+
+Sitemap: /sitemap.xml

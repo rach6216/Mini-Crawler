@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Fixture site – home</title>
+</head>
+<body>
+  <h1>Fixture site</h1>
+  <p>Deterministic crawl target used by integration tests and the Docker demo.</p>
+  <ul>
+    <li><a href="a.html">Page A (relative)</a></li>
+    <li><a href="/b.html">Page B (root-relative)</a></li>
+    <li><a href="a.html#top">Page A again (fragment, duplicate occurrence)</a></li>
+    <li><a href="https://external.example.org/x">External site</a></li>
+    <li><a href="mailto:someone@example.org">Mail (ignored)</a></li>
+    <li><a href="tel:+15550100">Phone (ignored)</a></li>
+    <li><a href="javascript:void(0)">Script (ignored)</a></li>
+    <li><a>Anchor without href (ignored)</a></li>
+  </ul>
+</body>
+</html>

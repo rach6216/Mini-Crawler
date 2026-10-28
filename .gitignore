@@ -11,3 +11,5 @@ frontend/dist/
 .env
 *.log
 .DS_Store
+# Internal planning notes, kept local
+docs/

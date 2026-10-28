@@ -6,8 +6,6 @@ A small, production-minded web crawler: submit a URL, a worker crawls it breadth
 - **Crawl Worker** — .NET 8 hosted services: consumes jobs with manual acks, claims them with an expiring lease, crawls, persists per page in one transaction, retries, dead-letters poison messages, recovers expired leases.
 - **PostgreSQL 16**, **RabbitMQ 3.13**, **React 18 + Vite + TanStack Query** served by nginx, plus a deterministic **fixture site** to crawl safely.
 
-Planning documents written before the code: [docs/requirements.md](docs/requirements.md), [docs/architecture.md](docs/architecture.md), [docs/contracts.md](docs/contracts.md), [docs/test-plan.md](docs/test-plan.md), [docs/decisions.md](docs/decisions.md), [docs/implementation-plan.md](docs/implementation-plan.md).
-
 ## 1. Architecture
 
 ```
@@ -19,7 +17,7 @@ Planning documents written before the code: [docs/requirements.md](docs/requirem
                                                       `crawl.dlx` ──▶ `crawl.jobs.dlq`
 ```
 
-Code layout (one shared assembly, layered by folder — see decision D1):
+Code layout (one shared assembly, layered by folder):
 
 ```
 src/Crawler.Core/Domain          entities, JobStateMachine, UrlNormalizer, DomainLinkRatio, UrlSafety (no EF/HTTP/MQ)
@@ -83,11 +81,11 @@ python scripts/e2e_smoke.py
 
 ### Configuration
 
-All settings live in `appsettings.json` and can be overridden with environment variables (`Section__Key`). Shared keys are listed in [docs/contracts.md](docs/contracts.md) §5 (`ConnectionStrings:Postgres`, `RabbitMq:*`, `Crawler:Limits|Http|Security|Worker|Outbox`). API-only keys: `Database:MigrateOnStartup` (default true), `Database:MigrationMaxAttempts` (30) / `MigrationRetryDelaySeconds` (2), `Outbox:Enabled` (true; tests disable the publisher), `Cors:AllowedOrigins` (defaults to the Vite and nginx origins).
+All settings live in `appsettings.json` and can be overridden with environment variables (`Section__Key`). Shared keys (`ConnectionStrings:Postgres`, `RabbitMq:*`, `Crawler:Limits|Http|Security|Worker|Outbox`). API-only keys: `Database:MigrateOnStartup` (default true), `Database:MigrationMaxAttempts` (30) / `MigrationRetryDelaySeconds` (2), `Outbox:Enabled` (true; tests disable the publisher), `Cors:AllowedOrigins` (defaults to the Vite and nginx origins).
 
 ## 4. API
 
-Full contract with field lists: [docs/contracts.md](docs/contracts.md). Errors are RFC 7807 `application/problem+json`.
+Field-level contract: the DTO records in `src/Crawler.Core/Application/Contracts/JobDtos.cs`. Errors are RFC 7807 `application/problem+json`.
 
 ```bash
 # create (202 + Location)
@@ -141,7 +139,7 @@ For each fetched page: `ratio = internal / total`, where *total* is the number o
 - BFS from the root (depth 0). Pages at `maxDepth` are fetched (so they get a ratio) but their links are not expanded. The root counts toward `maxPages`.
 - Only pages that receive a slot (`discoveredPages < maxPages`) become page rows; a link to an in-scope page that gets no slot marks the job `truncated`. Edges to external, out-of-depth or truncated targets are still persisted (`target_page_id` null).
 - Same-host `http(s)` pages only. External links are counted and stored as edges, never fetched. Redirects to another host are not followed (page marked `Skipped`).
-- Within a level, fetches run concurrently (`Crawler:Http:Concurrency`, default 4) but results are applied in page order, so the tree and parent selection are deterministic (decision D4).
+- Within a level, fetches run concurrently (`Crawler:Http:Concurrency`, default 4) but results are applied in page order, so the tree and parent selection are deterministic.
 - Normalization (`Domain/UrlNormalizer.cs`): resolve relative URLs against `<base href>` or the document URL, drop fragments, lower-case scheme and host, drop default ports, empty path → `/`. Path case, query order, trailing slashes and all query parameters are preserved. Unsupported schemes are rejected.
 - HTML only: the fetcher checks `Content-Type` before reading the body, caps bodies at 2 MB, uses a 10 s timeout per attempt, retries transient failures 3× with exponential backoff, follows at most 5 same-host redirects.
 - robots.txt (RFC 9309, `Crawler:Http:RespectRobotsTxt`, default on): fetched once per job from the starting host through the same safe pipeline; the group for `CrawlerAssignmentBot` is used if present, else `*`; longest-match precedence with `Allow` winning ties, `*` and `$` supported, body capped at 500 KiB. A 4xx or missing file allows everything; a 5xx or unreachable file disallows everything for that job. Disallowed pages keep their slot and appear in the tree as `Skipped` with the reason, so the exclusion is visible rather than silent.
@@ -161,7 +159,7 @@ AMQP properties: `message_id`, `correlation_id`, `content_type: application/json
 Several layers, each sufficient on its own for a different failure:
 
 1. **Atomic claim with lease** — `UPDATE crawl_jobs SET status='Running', lease_owner=me, lease_expires_at=now()+60s WHERE id=? AND (status='Pending' OR (status='Running' AND (lease_expires_at < now() OR lease_owner = me)))`. A duplicate message for a job that is terminal is acknowledged and dropped; for a job actively owned by another worker it is acknowledged too, because recovery does not depend on redelivery (next point).
-2. **Resume from the durable frontier** — each processed page commits atomically with its new child rows, edges and the counter update. On re-claim the worker reloads the job's pages; `Discovered` rows are the frontier, everything else is skipped. No page is fetched twice, no counter is double-applied (decision D3).
+2. **Resume from the durable frontier** — each processed page commits atomically with its new child rows, edges and the counter update. On re-claim the worker reloads the job's pages; `Discovered` rows are the frontier, everything else is skipped. No page is fetched twice, no counter is double-applied.
 3. **Owner-conditional writes** — the per-page counter update is `WHERE lease_owner = me AND status = 'Running'`; if it affects 0 rows the transaction is rolled back and the worker stops (`LeaseLostException`), so a worker that lost its lease during a GC pause cannot corrupt state.
 4. **Database constraints** — `unique (job_id, normalized_url)` and `unique (job_id, source_page_id, target_normalized_url)` are the last line of defense.
 
@@ -173,7 +171,7 @@ Several layers, each sufficient on its own for a different failure:
 
 **Straight to the DLQ (poison):** unparseable JSON, wrong `schemaVersion`, empty `jobId`, unknown job. Nothing is ever acknowledged before the state that makes redelivery safe has been committed.
 
-**Database-enforced cap:** every successful claim increments `crawl_jobs.attempts`. A claimable job (Pending, or Running with an expired lease) whose attempts already reached `MaxMessageAttempts` is marked `Failed` and its message dead-lettered before any new claim, so crashes, broker redeliveries and sweeper republishes, which all bypass the `x-attempt` header, still terminate (decision D16). If the consumer cannot even settle a message (for example the retry publish fails) it waits 5 s and returns the message to the queue; the same cap bounds that path.
+**Database-enforced cap:** every successful claim increments `crawl_jobs.attempts`. A claimable job (Pending, or Running with an expired lease) whose attempts already reached `MaxMessageAttempts` is marked `Failed` and its message dead-lettered before any new claim, so crashes, broker redeliveries and sweeper republishes, which all bypass the `x-attempt` header, still terminate. If the consumer cannot even settle a message (for example the retry publish fails) it waits 5 s and returns the message to the queue; the same cap bounds that path.
 
 ## 12. Crash recovery
 
@@ -206,7 +204,7 @@ cd frontend && npm run test:e2e           # Playwright, against `docker compose 
 | `frontend` (vitest) | tree utilities, formatting, TreeView rendering, mock client lifecycle |
 | `frontend/e2e` (Playwright, Chromium, against the running stack) | start-crawl validation and full crawl of the fixture site with tree assertions, history ordering and navigation, cancel of a running slow crawl, 400 px layout without horizontal overflow |
 
-Expected values were fixed in [docs/test-plan.md](docs/test-plan.md) before implementation.
+Expected values were fixed in a test plan before implementation; the ids in test names (N1, R4, B6, W5 …) refer to it.
 
 ## 15. Observability
 
@@ -233,7 +231,7 @@ Users submit arbitrary URLs, so the crawler defends against SSRF:
 - Pages beyond `maxPages` are represented only as edges, not as tree nodes.
 - Message-level retry uses a fixed delay (one TTL queue); changing `RetryDelaySeconds` requires deleting `crawl.jobs.retry` because RabbitMQ queue arguments are immutable.
 - Lease recovery after a crash takes up to lease + sweep interval (≤ 90 s with defaults) and requires at least one live worker. A sweeper republishes an expired lease at most once per 5 minutes per process.
-- No authentication on the API; it is a local assignment deployment (an API-key scheme was built and removed again at the owner's request, decision D25).
+- No authentication on the API; it is a local assignment deployment (an API-key scheme was built and removed again by decision).
 
 ## 18. Engineering trade-offs, priorities and next steps
 
@@ -241,7 +239,7 @@ Users submit arbitrary URLs, so the crawler defends against SSRF:
 
 **Trade-offs:** one shared assembly instead of a project per layer; level-synchronous BFS (deterministic trees) instead of maximal throughput; resume-from-frontier instead of replay (more state handling, exact counters); fixed-TTL retry queue instead of exponential message backoff; the worker hosts a tiny Kestrel endpoint purely for health.
 
-**Cut:** SSE/SignalR progress (polling is accepted by the assignment and simpler) and authentication (both were built in a second round and removed again at the owner's request, D25); per-domain politeness delays. **Added in the second round once the core was verified:** robots.txt and Playwright browser tests.
+**Cut:** SSE/SignalR progress (polling is accepted by the assignment and simpler) and authentication (both were built in a second round and removed again by decision); per-domain politeness delays. **Added in the second round once the core was verified:** robots.txt and Playwright browser tests.
 
 **Next with more time:** keyset pagination for history; `repeated references` in the tree API (cross-links to already-shown nodes); exponential message backoff with multiple TTL queues or a delayed-exchange plugin; OpenTelemetry traces/metrics; per-host rate limiting; configurable subdomain policy; a `pages`/`edges` listing endpoint with pagination; authentication (OIDC/SSO) and an SSE progress stream if the deployment ever leaves the local machine.
 
@@ -258,11 +256,11 @@ What was executed on 2026-10-28 before submission (Windows 11 host, Docker Deskt
 | `docker compose up --build` | all six services healthy; migrations applied by the API |
 | `python scripts/e2e_smoke.py --with-recovery --with-crash` | fixture crawl (5 pages, 1 failed, root ratio 0.75, deterministic parents), duplicate delivery leaves rows and counters unchanged, invalid JSON and unknown job land in `crawl.jobs.dlq`, cancel matrix (202/200/409/404), canceled job not revived by its queued message, validation (loopback literal, ftp, depth 9 → 400), history ordering, health endpoints, expired-lease recovery by the sweeper, worker container killed mid-crawl of the slow fixture and the job resumed to 21/21/0 |
 | UI against the real API (Chrome, 1400 px and 400 px) | start → details with live polling and tree → history; no console errors |
-| Independent code review (read-only agent) | 10 findings; 9 fixed before submission (decisions D16–D20), 1 documented as a known limitation (cancel vs. completion race) |
+| Independent code review (read-only agent) | 10 findings; 9 fixed before submission, 1 documented as a known limitation (cancel vs. completion race) |
 | GitHub Actions workflow | written and validated locally (`docker compose config`); not executed on GitHub from this machine |
 
 Crash recovery is exercised three ways: integration test W6 (crash → expired lease → republish → resume with identical counts), the live expired-lease scenario, and the live kill of the worker container mid-crawl.
 
 ## 20. Submission summary
 
-See the final section of this README's companion, [docs/implementation-plan.md](docs/implementation-plan.md), for the timeline. In short: a working API → RabbitMQ → Worker → PostgreSQL → React pipeline with deterministic BFS crawling, exact Domain Link Ratios, idempotent at-least-once processing (lease + frontier resume + constraints), bounded retries with a dead-letter queue, a transactional outbox, lease-based crash recovery, idempotent cancellation, SSRF protection, structured logs, health checks, Docker Compose, CI, and specification-first tests at unit, integration and end-to-end level.
+In short: a working API → RabbitMQ → Worker → PostgreSQL → React pipeline with deterministic BFS crawling, exact Domain Link Ratios, idempotent at-least-once processing (lease + frontier resume + constraints), bounded retries with a dead-letter queue, a transactional outbox, lease-based crash recovery, idempotent cancellation, SSRF protection, structured logs, health checks, Docker Compose, CI, and specification-first tests at unit, integration and end-to-end level.

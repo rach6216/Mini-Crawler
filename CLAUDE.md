@@ -1,6 +1,6 @@
 # CLAUDE.md — Crawler
 
-Job-based web crawler: ASP.NET Core API + .NET Worker + PostgreSQL + RabbitMQ + React. Assignment: `Home_Assignment_Full-Stack_Developer.pdf`. Planning docs live in `docs/` (`requirements.md`, `architecture.md`, `contracts.md`, `test-plan.md`, `decisions.md`, `implementation-plan.md`). `docs/contracts.md` is frozen; changes need orchestrator approval and a decision-log entry.
+Job-based web crawler: ASP.NET Core API + .NET Worker + PostgreSQL + RabbitMQ + React. Assignment: `Home_Assignment_Full-Stack_Developer.pdf`. Planning notes (`docs/`: requirements, architecture, contracts, test plan, decision log, implementation plan) are local-only and gitignored; a fresh clone does not have them. The frozen contract is also expressed in code: the DTO records, `CrawlJobMessage`, options classes and the EF model in `src/Crawler.Core`.
 
 ## Layout
 ```
@@ -43,10 +43,10 @@ export DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH" DOTNET_CLI_TELEMET
 - Frontend: function components, hooks, TanStack Query for all server state, no `any`, CSS variables from `src/styles/tokens.css`.
 
 ## Agent responsibilities (Phase B)
-See `docs/implementation-plan.md` ownership table. Agents must not edit files outside their ownership. Shared contracts: `docs/contracts.md` and the C# types in `src/Crawler.Core/Application/` and `src/Crawler.Core/Domain/` are read-only for agents.
+Agents work with disjoint file ownership (API / Worker / Frontend / orchestrator for deploy, CI, README). Shared contracts, the C# types in `src/Crawler.Core/Application/` and `src/Crawler.Core/Domain/`, are read-only for agents.
 
 ## Testing expectations
-`docs/test-plan.md` defines inputs and expected outputs before implementation. Do not alter expected values to make tests pass. Integration tests that need infrastructure must use the real thing (Testcontainers or a provided connection) and be clearly skipped — never mocked and reported as verified — when it is unavailable.
+Expected inputs and outputs are fixed before implementation (test ids such as N1, R4, B6, W5 in test names refer to that plan). Do not alter expected values to make tests pass. Integration tests that need infrastructure must use the real thing (Testcontainers or a provided connection) and be clearly skipped — never mocked and reported as verified — when it is unavailable.
 
 ## Integration rules
 - Build must stay green; run `dotnet build Crawler.sln` before handing work back.

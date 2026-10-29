@@ -1,24 +1,29 @@
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, Link2 } from 'lucide-react';
 import { memo, type CSSProperties } from 'react';
 import type { TreeNodeDto } from '../api/types';
 import { splitUrl } from '../lib/format';
+import { PageLinksPanel } from './PageLinksPanel';
 import { RatioMeter } from './RatioMeter';
 import { FetchStatusBadge } from './StatusBadge';
 
 export interface TreeNodeProps {
+  jobId: string;
   node: TreeNodeDto;
   level: number;
   hasChildren: boolean;
   expanded: boolean;
   onToggle: (pageId: string, expanded: boolean) => void;
+  linksOpen: boolean;
+  onToggleLinks: (pageId: string) => void;
 }
 
-function TreeNodeRow({ node, level, hasChildren, expanded, onToggle }: TreeNodeProps) {
+function TreeNodeRow({ jobId, node, level, hasChildren, expanded, onToggle, linksOpen, onToggleLinks }: TreeNodeProps) {
   const { host, path } = splitUrl(node.url);
   const fetched = node.fetchStatus === 'Fetched';
   const statusTitle = [node.httpStatusCode != null ? `HTTP ${node.httpStatusCode}` : null, node.errorMessage]
     .filter(Boolean)
     .join(' · ');
+  const linksPanelId = `page-links-${node.pageId}`;
 
   return (
     <li className="tree-row" style={{ '--level': level } as CSSProperties} data-status={node.fetchStatus}>
@@ -42,7 +47,23 @@ function TreeNodeRow({ node, level, hasChildren, expanded, onToggle }: TreeNodeP
             <span className="tree-row__host">{host}</span>
           </a>
           {node.errorMessage && <span className="tree-row__error">{node.errorMessage}</span>}
-          {hasChildren && !expanded && <span className="tree-row__count">{node.children.length} children</span>}
+          {(node.outgoingLinkCount > 0 || (hasChildren && !expanded)) && (
+            <span className="tree-row__extras">
+              {hasChildren && !expanded && <span className="tree-row__count">{node.children.length} children</span>}
+              {node.outgoingLinkCount > 0 && (
+                <button
+                  type="button"
+                  className="tree-row__links-toggle"
+                  aria-expanded={linksOpen}
+                  aria-controls={linksOpen ? linksPanelId : undefined}
+                  onClick={() => onToggleLinks(node.pageId)}
+                >
+                  <Link2 size={12} aria-hidden />
+                  Links ({node.outgoingLinkCount.toLocaleString()})
+                </button>
+              )}
+            </span>
+          )}
         </div>
       </div>
       <div className="tree-row__meta">
@@ -63,6 +84,7 @@ function TreeNodeRow({ node, level, hasChildren, expanded, onToggle }: TreeNodeP
           )}
         </span>
       </div>
+      {linksOpen && <PageLinksPanel id={linksPanelId} jobId={jobId} pageId={node.pageId} pagePath={path} />}
     </li>
   );
 }

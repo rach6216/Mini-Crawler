@@ -1,15 +1,15 @@
+using Crawler.Api.Infrastructure;
 using Crawler.Api.Services;
 using Crawler.Core.Application.Abstractions;
 using Crawler.Core.Application.Contracts;
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.Extensions.Options;
 
 namespace Crawler.Api.Endpoints;
 
 public static class JobEndpoints
 {
     public const int DefaultPage = 1;
-    public const int DefaultPageSize = 20;
-    public const int MaxPageSize = 100;
 
     public static IEndpointRouteBuilder MapJobEndpoints(this IEndpointRouteBuilder routes)
     {
@@ -19,6 +19,7 @@ public static class JobEndpoints
         jobs.MapGet("/", ListAsync);
         jobs.MapGet("/{jobId:guid}", GetAsync);
         jobs.MapGet("/{jobId:guid}/tree", GetTreeAsync);
+        jobs.MapGet("/{jobId:guid}/pages/{pageId:guid}/links", GetPageLinksAsync);
         jobs.MapPost("/{jobId:guid}/cancel", CancelAsync);
 
         return routes;
@@ -41,30 +42,64 @@ public static class JobEndpoints
 
     private static async Task<Results<Ok<PagedResult<JobSummaryDto>>, ValidationProblem>> ListAsync(
         JobQueryService queries,
+        IOptions<PagingOptions> paging,
         CancellationToken cancellationToken,
         int? page = null,
         int? pageSize = null)
     {
         var effectivePage = page ?? DefaultPage;
-        var effectivePageSize = pageSize ?? DefaultPageSize;
+        var effectivePageSize = pageSize ?? paging.Value.DefaultPageSize;
 
-        var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
-        if (effectivePage < 1)
-        {
-            errors["page"] = ["page must be 1 or greater."];
-        }
-
-        if (effectivePageSize < 1 || effectivePageSize > MaxPageSize)
-        {
-            errors["pageSize"] = [$"pageSize must be between 1 and {MaxPageSize}."];
-        }
-
+        var errors = ValidatePaging(effectivePage, effectivePageSize, paging.Value.MaxPageSize);
         if (errors.Count > 0)
         {
             return TypedResults.ValidationProblem(errors);
         }
 
         return TypedResults.Ok(await queries.ListAsync(effectivePage, effectivePageSize, cancellationToken));
+    }
+
+    private static async Task<Results<Ok<PagedResult<PageLinkDto>>, ValidationProblem, ProblemHttpResult>> GetPageLinksAsync(
+        Guid jobId,
+        Guid pageId,
+        JobQueryService queries,
+        IOptions<PagingOptions> paging,
+        CancellationToken cancellationToken,
+        int? page = null,
+        int? pageSize = null)
+    {
+        var effectivePage = page ?? DefaultPage;
+        var effectivePageSize = pageSize ?? paging.Value.DefaultLinksPageSize;
+
+        var errors = ValidatePaging(effectivePage, effectivePageSize, paging.Value.MaxLinksPageSize);
+        if (errors.Count > 0)
+        {
+            return TypedResults.ValidationProblem(errors);
+        }
+
+        var links = await queries.GetPageLinksAsync(jobId, pageId, effectivePage, effectivePageSize, cancellationToken);
+        return links is null
+            ? TypedResults.Problem(
+                statusCode: StatusCodes.Status404NotFound,
+                title: "Page not found",
+                detail: $"Page {pageId} does not exist in job {jobId}.")
+            : TypedResults.Ok(links);
+    }
+
+    private static Dictionary<string, string[]> ValidatePaging(int page, int pageSize, int maxPageSize)
+    {
+        var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        if (page < 1)
+        {
+            errors["page"] = ["page must be 1 or greater."];
+        }
+
+        if (pageSize < 1 || pageSize > maxPageSize)
+        {
+            errors["pageSize"] = [$"pageSize must be between 1 and {maxPageSize}."];
+        }
+
+        return errors;
     }
 
     private static async Task<Results<Ok<JobDetailsDto>, ProblemHttpResult>> GetAsync(

@@ -12,6 +12,7 @@ import type {
   JobStatus,
   JobSummaryDto,
   JobTreeDto,
+  PageLinkDto,
   PagedResult,
   TreeNodeDto,
 } from './types';
@@ -24,6 +25,7 @@ const LATENCY_MS = 220;
 
 const BRANCHING_NORMAL = [6, 4, 3, 2, 2] as const;
 const BRANCHING_LARGE = [10, 8, 6, 4, 3] as const;
+const EXTERNAL_HOSTS = ['github.com', 'www.linkedin.com', 'external.example.org'] as const;
 const SECTION_WORDS = [
   'about', 'blog', 'docs', 'pricing', 'careers', 'contact', 'guides', 'api',
   'changelog', 'team', 'press', 'legal', 'status', 'community', 'events', 'support',
@@ -129,6 +131,18 @@ export function createMockClient(now: () => number = Date.now, latencyMs: number
         totalNodes: visible.length,
         root: buildTree(visible, snap.processed),
       };
+    },
+
+    async getPageLinks(jobId: string, pageId: string, page: number, pageSize: number): Promise<PagedResult<PageLinkDto>> {
+      await delay();
+      const job = find(jobId);
+      const snap = snapshot(job, now());
+      const index = job.nodes.findIndex((n) => n.pageId === pageId);
+      if (index < 0 || index >= snap.discovered) {
+        throw new ApiError(404, { title: 'Page not found', detail: `Page ${pageId} does not exist in job ${jobId}.`, status: 404 });
+      }
+      const all = index < snap.processed ? buildLinks(job, index, snap) : [];
+      return { items: all.slice((page - 1) * pageSize, page * pageSize), page, pageSize, totalCount: all.length };
     },
 
     async listJobs(page: number, pageSize: number): Promise<PagedResult<JobSummaryDto>> {
@@ -271,6 +285,52 @@ function toDetails(job: MockJob, t: number): JobDetailsDto {
     cancellationRequested: job.cancelRequestedAtMs !== null,
     progressPercent: terminal ? 100 : snap.discovered === 0 ? 0 : Math.floor((snap.processed * 100) / snap.discovered),
   };
+}
+
+/**
+ * Outgoing links consistent with the node's counters: the occurrences add up to outgoingLinkCount and
+ * the internal ones to internalLinkCount. Child pages are the internal targets; extra internal
+ * occurrences point back to the parent (or a non-page URL for the root); the rest are external.
+ */
+function buildLinks(job: MockJob, index: number, snap: Snapshot): PageLinkDto[] {
+  const source = job.nodes[index]!;
+  if (source.fetchStatus !== 'Fetched') return [];
+
+  const pageTarget = (targetIndex: number, occurrenceCount: number): PageLinkDto => {
+    const target = job.nodes[targetIndex]!;
+    const known = targetIndex < snap.discovered;
+    return {
+      targetUrl: target.url,
+      occurrenceCount,
+      isInternal: true,
+      targetPageId: known ? target.pageId : null,
+      targetFetchStatus: !known ? null : targetIndex < snap.processed ? target.fetchStatus : 'Discovered',
+    };
+  };
+
+  const links: PageLinkDto[] = [];
+  const children = job.nodes
+    .map((n, i) => ({ n, i }))
+    .filter(({ n }) => n.parentIndex === index)
+    .slice(0, source.internalLinkCount);
+  for (const { i } of children) links.push(pageTarget(i, 1));
+
+  const extraInternal = source.internalLinkCount - children.length;
+  if (extraInternal > 0) {
+    links.push(
+      source.parentIndex !== null
+        ? pageTarget(source.parentIndex, extraInternal)
+        : { targetUrl: `${new URL(source.url).origin}/privacy`, occurrenceCount: extraInternal, isInternal: true, targetPageId: null, targetFetchStatus: null },
+    );
+  }
+
+  const external = source.outgoingLinkCount - source.internalLinkCount;
+  const hosts = EXTERNAL_HOSTS.slice(0, Math.min(external, EXTERNAL_HOSTS.length));
+  hosts.forEach((host, i) => {
+    const share = Math.floor(external / hosts.length) + (i < external % hosts.length ? 1 : 0);
+    links.push({ targetUrl: `https://${host}/`, occurrenceCount: share, isInternal: false, targetPageId: null, targetFetchStatus: null });
+  });
+  return links;
 }
 
 function buildTree(nodes: TemplateNode[], processed: number): TreeNodeDto | null {

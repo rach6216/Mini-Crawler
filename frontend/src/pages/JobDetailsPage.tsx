@@ -333,7 +333,7 @@ function TreeSection({ job, treeQuery }: { job: JobDetailsDto; treeQuery: Return
             </button>
           </Alert>
         )}
-        <TreeView key={job.jobId} root={tree.root} />
+        <TreeView key={job.jobId} jobId={job.jobId} root={tree.root} />
       </>
     );
   }

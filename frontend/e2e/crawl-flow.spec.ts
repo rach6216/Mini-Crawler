@@ -61,4 +61,18 @@ test('crawling the fixture site shows progress, failures and the page tree', asy
   const failedRow = rows.filter({ hasText: '/d.html' });
   await expect(failedRow).toContainText('Failed');
   await expect(failedRow).toContainText('404');
+
+  // Outgoing links of the start page: /a.html is linked twice (fragment duplicate), the external site once.
+  const rootRow = rows.first();
+  const linksToggle = rootRow.getByRole('button', { name: /^Links \(\d+\)$/ });
+  await linksToggle.click();
+  await expect(linksToggle).toHaveAttribute('aria-expanded', 'true');
+  const links = rootRow.getByRole('list', { name: /^Outgoing links of / }).getByRole('listitem');
+  const aLink = links.filter({ hasText: '/a.html' });
+  await expect(aLink).toHaveCount(1);
+  await expect(aLink).toContainText('×2');
+  await expect(aLink).toContainText('Internal');
+  const externalLink = links.filter({ hasText: 'external.example.org' });
+  await expect(externalLink).toHaveCount(1);
+  await expect(externalLink).toContainText('External');
 });

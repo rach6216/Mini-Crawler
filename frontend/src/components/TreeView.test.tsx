@@ -1,9 +1,26 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import type { ReactElement } from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { api } from '../api';
 import { node, sampleTree } from '../test/fixtures';
-import { TreeView } from './TreeView';
+import { TreeView as TreeViewComponent } from './TreeView';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
+
+const JOB_ID = 'job-1';
+
+function TreeView({ root }: { root: Parameters<typeof TreeViewComponent>[0]['root'] }): ReactElement {
+  return <TreeViewComponent jobId={JOB_ID} root={root} />;
+}
+
+function renderWithQueries(ui: ReactElement) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
 
 const visiblePaths = () =>
   within(screen.getByRole('list', { name: 'Crawled pages' }))
@@ -51,5 +68,43 @@ describe('TreeView', () => {
     render(<TreeView root={root} />);
     expect(screen.getByText('HTTP 404 Not Found')).toBeTruthy();
     expect(screen.getByText('Failed').closest('.badge')?.getAttribute('title')).toBe('HTTP 404 · HTTP 404 Not Found');
+  });
+
+  it('lazily loads and discloses the outgoing links of a page', async () => {
+    const getPageLinks = vi.spyOn(api, 'getPageLinks').mockResolvedValue({
+      items: [
+        { targetUrl: 'https://example.com/a', occurrenceCount: 2, isInternal: true, targetPageId: 'a', targetFetchStatus: 'Fetched' },
+        { targetUrl: 'https://external.example.org/x', occurrenceCount: 1, isInternal: false, targetPageId: null, targetFetchStatus: null },
+      ],
+      page: 1,
+      pageSize: 100,
+      totalCount: 2,
+    });
+    const root = node('root', [node('leaf', [], { depth: 1, outgoingLinkCount: 0, internalLinkCount: 0 })]);
+    renderWithQueries(<TreeView root={root} />);
+
+    // No button for a page without links; nothing is fetched until the disclosure is opened.
+    expect(screen.getAllByRole('button', { name: /^Links/ })).toHaveLength(1);
+    expect(getPageLinks).not.toHaveBeenCalled();
+
+    const toggle = screen.getByRole('button', { name: 'Links (4)' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+
+    const list = await screen.findByRole('list', { name: 'Outgoing links of /' });
+    expect(getPageLinks).toHaveBeenCalledWith(JOB_ID, 'root', 1, 100, expect.anything());
+    expect(toggle.getAttribute('aria-controls')).toBe(list.parentElement?.id);
+    const [internal, external] = within(list).getAllByRole('listitem');
+    expect(within(internal!).getByRole('link').getAttribute('title')).toBe('https://example.com/a');
+    expect(internal!.textContent).toContain('×2');
+    expect(internal!.textContent).toContain('Internal');
+    expect(internal!.textContent).toContain('Fetched');
+    expect(external!.textContent).toContain('External');
+    expect(external!.textContent).not.toContain('×');
+
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('list', { name: 'Outgoing links of /' })).toBeNull();
   });
 });

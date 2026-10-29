@@ -14,10 +14,12 @@ import { TreeNode } from './TreeNode';
 /**
  * Renders the crawl tree as a flat list of visible rows (pre-order), so a 1000-page tree costs
  * one list render rather than deep component recursion. Expansion state is keyed by pageId and
- * survives live polling updates. Mount with `key={jobId}` to reset it per job.
+ * survives live polling updates. Mount with `key={jobId}` to reset it (and the open link panels) per job.
  */
-export function TreeView({ root }: { root: TreeNodeDto }) {
+export function TreeView({ jobId, root }: { jobId: string; root: TreeNodeDto }) {
   const [expansion, setExpansion] = useState<ExpansionState>(INITIAL_EXPANSION);
+  // Pages whose outgoing-link panel is open; only visible rows render a panel, so hidden ones cost nothing.
+  const [linksOpen, setLinksOpen] = useState<ReadonlySet<string>>(() => new Set());
 
   const total = useMemo(() => countNodes(root), [root]);
   const expanded = useMemo(() => resolveExpanded(root, expansion), [root, expansion]);
@@ -25,6 +27,14 @@ export function TreeView({ root }: { root: TreeNodeDto }) {
 
   const onToggle = useCallback((pageId: string, isExpanded: boolean) => {
     setExpansion((state) => toggleExpansion(state, pageId, isExpanded));
+  }, []);
+
+  const onToggleLinks = useCallback((pageId: string) => {
+    setLinksOpen((open) => {
+      const next = new Set(open);
+      if (!next.delete(pageId)) next.add(pageId);
+      return next;
+    });
   }, []);
 
   return (
@@ -62,11 +72,14 @@ export function TreeView({ root }: { root: TreeNodeDto }) {
         {rows.map((row) => (
           <TreeNode
             key={row.node.pageId}
+            jobId={jobId}
             node={row.node}
             level={row.level}
             hasChildren={row.hasChildren}
             expanded={row.expanded}
             onToggle={onToggle}
+            linksOpen={linksOpen.has(row.node.pageId)}
+            onToggleLinks={onToggleLinks}
           />
         ))}
       </ul>

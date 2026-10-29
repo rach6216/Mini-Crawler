@@ -1,9 +1,8 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { JOB_POLL_INTERVAL_MS, QUERY_RETRY_COUNT, PAGE_LINKS_PAGE_SIZE } from '../config';
 import { api } from './index';
 import { ApiError } from './errors';
 import { isTerminal, type CreateJobRequest, type JobDetailsDto } from './types';
-
-export const POLL_INTERVAL_MS = 2_000;
 
 export const jobKeys = {
   all: ['jobs'] as const,
@@ -11,12 +10,15 @@ export const jobKeys = {
   list: (page: number, pageSize: number) => [...jobKeys.lists(), { page, pageSize }] as const,
   detail: (jobId: string) => [...jobKeys.all, 'detail', jobId] as const,
   tree: (jobId: string) => [...jobKeys.all, 'tree', jobId] as const,
+  pageLinks: (jobId: string, pageId: string) => [...jobKeys.all, 'pageLinks', jobId, pageId] as const,
 };
+
+/** Links are fetched in pages of this size; the panel offers "show more" for pages with more links. */
 
 /** 4xx responses are deterministic; retrying them only delays the error state. */
 export function shouldRetry(failureCount: number, error: unknown): boolean {
   if (error instanceof ApiError && error.status >= 400 && error.status < 500) return false;
-  return failureCount < 2;
+  return failureCount < QUERY_RETRY_COUNT;
 }
 
 export function useJob(jobId: string) {
@@ -27,7 +29,7 @@ export function useJob(jobId: string) {
       const data = query.state.data;
       // Keep polling through transient refetch errors; stop only if nothing was ever loaded (e.g. 404).
       if (query.state.status === 'error' && !data) return false;
-      return data && isTerminal(data.status) ? false : POLL_INTERVAL_MS;
+      return data && isTerminal(data.status) ? false : JOB_POLL_INTERVAL_MS;
     },
   });
 }
@@ -49,8 +51,23 @@ export function useJobTree(jobId: string, job: JobDetailsDto | undefined) {
       const data = query.state.data;
       // Keep polling through transient refetch errors; stop only if nothing was ever loaded (e.g. 404).
       if (query.state.status === 'error' && !data) return false;
-      return data && isTerminal(data.status) ? false : POLL_INTERVAL_MS;
+      return data && isTerminal(data.status) ? false : JOB_POLL_INTERVAL_MS;
     },
+  });
+}
+
+/**
+ * Outgoing links of one page, loaded lazily (only while its panel is open). A page's links are written
+ * in the same transaction that marks it fetched and never change afterwards, so they are not refetched.
+ */
+export function useJobPageLinks(jobId: string, pageId: string, enabled: boolean) {
+  return useInfiniteQuery({
+    queryKey: jobKeys.pageLinks(jobId, pageId),
+    queryFn: ({ pageParam, signal }) => api.getPageLinks(jobId, pageId, pageParam, PAGE_LINKS_PAGE_SIZE, signal),
+    initialPageParam: 1,
+    getNextPageParam: (last) => (last.page * last.pageSize < last.totalCount ? last.page + 1 : undefined),
+    enabled,
+    staleTime: Infinity,
   });
 }
 

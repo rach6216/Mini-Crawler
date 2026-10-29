@@ -56,4 +56,12 @@ public sealed record TreeNodeDto(
     string? ErrorMessage,
     IReadOnlyList<TreeNodeDto> Children);
 
+/// <summary>One outgoing edge of a page. Target status is known only when the target became a page of the job.</summary>
+public sealed record PageLinkDto(
+    string TargetUrl,
+    int OccurrenceCount,
+    bool IsInternal,
+    Guid? TargetPageId,
+    PageFetchStatus? TargetFetchStatus);
+
 public sealed record CancelJobResponse(Guid JobId, JobStatus Status, bool CancellationRequested);

@@ -71,4 +71,24 @@ describe('mock client', () => {
     expect(first.items.some((j) => j.truncated)).toBe(true);
     await expect(api.getJob('missing')).rejects.toMatchObject({ status: 404 });
   });
+
+  it('serves page links consistent with the tree counters', async () => {
+    const { api, clock } = setup();
+    const { jobId } = await api.createJob({ url: 'https://site.test/', maxDepth: 2, maxPages: 200 });
+    clock.advance(20_000);
+    const root = (await api.getJobTree(jobId)).root!;
+
+    const links = await api.getPageLinks(jobId, root.pageId, 1, 500);
+    const occurrences = (internal: boolean) =>
+      links.items.filter((l) => l.isInternal === internal).reduce((sum, l) => sum + l.occurrenceCount, 0);
+    expect(occurrences(true)).toBe(root.internalLinkCount);
+    expect(occurrences(false)).toBe(root.outgoingLinkCount - root.internalLinkCount);
+    expect(links.totalCount).toBe(links.items.length);
+    const childIds = new Set(root.children.map((c) => c.pageId));
+    expect(links.items.filter((l) => l.targetPageId !== null).every((l) => childIds.has(l.targetPageId!))).toBe(true);
+
+    const firstPage = await api.getPageLinks(jobId, root.pageId, 1, 1);
+    expect(firstPage.items).toEqual(links.items.slice(0, 1));
+    await expect(api.getPageLinks(jobId, 'missing', 1, 100)).rejects.toMatchObject({ status: 404 });
+  });
 });

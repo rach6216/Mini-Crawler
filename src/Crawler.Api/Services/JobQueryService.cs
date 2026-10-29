@@ -53,6 +53,37 @@ public sealed class JobQueryService(CrawlerDbContext db)
         return new JobTreeDto(jobId, job.Status, job.Truncated, pages.Count, TreeBuilder.Build(pages));
     }
 
+    /// <returns>Null when the job does not exist or the page does not belong to it.</returns>
+    public async Task<PagedResult<PageLinkDto>?> GetPageLinksAsync(
+        Guid jobId, Guid pageId, int page, int pageSize, CancellationToken cancellationToken)
+    {
+        var pageExists = await db.Pages.AsNoTracking().AnyAsync(p => p.Id == pageId && p.JobId == jobId, cancellationToken);
+        if (!pageExists)
+        {
+            return null;
+        }
+
+        // Served by ux_crawl_edges_job_source_target (job_id, source_page_id prefix).
+        var edges = db.Edges.AsNoTracking().Where(e => e.JobId == jobId && e.SourcePageId == pageId);
+        var totalCount = await edges.CountAsync(cancellationToken);
+        var items = await (
+                from edge in edges
+                join target in db.Pages.AsNoTracking() on edge.TargetPageId equals (Guid?)target.Id into targets
+                from target in targets.DefaultIfEmpty()
+                orderby edge.Id
+                select new PageLinkDto(
+                    edge.TargetNormalizedUrl,
+                    edge.OccurrenceCount,
+                    edge.IsInternal,
+                    edge.TargetPageId,
+                    target == null ? null : target.FetchStatus))
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+
+        return new PagedResult<PageLinkDto>(items, page, pageSize, totalCount);
+    }
+
     public Task<CancelJobResponse?> GetCancellationStateAsync(Guid jobId, CancellationToken cancellationToken) =>
         db.Jobs.AsNoTracking()
             .Where(j => j.Id == jobId)

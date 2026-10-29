@@ -1,9 +1,8 @@
+import { API_BASE_URL, USE_MOCKS } from '../config';
 import { createHttpClient } from './client';
 import { createMockClient } from './mockClient';
 import type { CrawlerApi } from './types';
 
-export const usingMocks = import.meta.env.VITE_USE_MOCKS === 'true';
+export const usingMocks = USE_MOCKS;
 
-const baseUrl = import.meta.env.VITE_API_BASE_URL ?? '';
-
-export const api: CrawlerApi = usingMocks ? createMockClient() : createHttpClient(baseUrl);
+export const api: CrawlerApi = usingMocks ? createMockClient() : createHttpClient(API_BASE_URL);

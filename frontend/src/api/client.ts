@@ -7,6 +7,7 @@ import type {
   JobDetailsDto,
   JobSummaryDto,
   JobTreeDto,
+  PageLinkDto,
   PagedResult,
   ProblemDetails,
 } from './types';
@@ -39,6 +40,11 @@ export function createHttpClient(baseUrl: string): CrawlerApi {
       request<CreateJobResponse>('/jobs', { method: 'POST', body: JSON.stringify(body), signal }),
     getJob: (jobId, signal) => request<JobDetailsDto>(`/jobs/${encodeURIComponent(jobId)}`, { signal }),
     getJobTree: (jobId, signal) => request<JobTreeDto>(`/jobs/${encodeURIComponent(jobId)}/tree`, { signal }),
+    getPageLinks: (jobId, pageId, page, pageSize, signal) =>
+      request<PagedResult<PageLinkDto>>(
+        `/jobs/${encodeURIComponent(jobId)}/pages/${encodeURIComponent(pageId)}/links?page=${page}&pageSize=${pageSize}`,
+        { signal },
+      ),
     listJobs: (page, pageSize, signal) =>
       request<PagedResult<JobSummaryDto>>(`/jobs?page=${page}&pageSize=${pageSize}`, { signal }),
     cancelJob: (jobId, signal) =>

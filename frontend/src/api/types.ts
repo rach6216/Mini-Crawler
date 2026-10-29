@@ -63,6 +63,15 @@ export interface JobTreeDto {
   root: TreeNodeDto | null;
 }
 
+export interface PageLinkDto {
+  targetUrl: string;
+  occurrenceCount: number;
+  isInternal: boolean;
+  /** Set only when the target became a page of the job. */
+  targetPageId: string | null;
+  targetFetchStatus: FetchStatus | null;
+}
+
 export interface JobSummaryDto {
   jobId: string;
   inputUrl: string;
@@ -103,6 +112,13 @@ export interface CrawlerApi {
   createJob(request: CreateJobRequest, signal?: AbortSignal): Promise<CreateJobResponse>;
   getJob(jobId: string, signal?: AbortSignal): Promise<JobDetailsDto>;
   getJobTree(jobId: string, signal?: AbortSignal): Promise<JobTreeDto>;
+  getPageLinks(
+    jobId: string,
+    pageId: string,
+    page: number,
+    pageSize: number,
+    signal?: AbortSignal,
+  ): Promise<PagedResult<PageLinkDto>>;
   listJobs(page: number, pageSize: number, signal?: AbortSignal): Promise<PagedResult<JobSummaryDto>>;
   cancelJob(jobId: string, signal?: AbortSignal): Promise<CancelJobResponse>;
 }

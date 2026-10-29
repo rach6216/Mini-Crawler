@@ -17,6 +17,8 @@ public enum CancellationRequestOutcome
 
 public sealed record ExpiredLease(Guid JobId, Guid CorrelationId, string? LeaseOwner, DateTimeOffset? LeaseExpiresAt);
 
+public sealed record StalePendingJob(Guid JobId, Guid CorrelationId, DateTimeOffset CreatedAt);
+
 public sealed record PageProgressDelta(int DiscoveredDelta, int ProcessedDelta, int FailedDelta, bool Truncated);
 
 /// <summary>
@@ -57,4 +59,10 @@ public interface IJobStateStore
     Task<bool> IsCancellationRequestedAsync(Guid jobId, CancellationToken cancellationToken);
 
     Task<IReadOnlyList<ExpiredLease>> FindExpiredLeasesAsync(int limit, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Pending jobs created more than <paramref name="olderThan"/> ago without a cancellation request,
+    /// oldest first. Such a job's message was lost (queue purged, broker data loss, dead-lettered by a bug).
+    /// </summary>
+    Task<IReadOnlyList<StalePendingJob>> FindStalePendingAsync(TimeSpan olderThan, int limit, CancellationToken cancellationToken);
 }

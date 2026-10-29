@@ -167,6 +167,26 @@ public sealed class JobStateStoreTests(InfrastructureFixture infrastructure)
         Assert.Contains(row.LeaseOwner, new[] { "worker-a", "worker-b" });
     }
 
+    [Fact]
+    public async Task FindStalePending_returns_old_uncanceled_pending_jobs_oldest_first()
+    {
+        var now = TestData.UtcNow();
+        var newer = await SeedAsync(TestData.Job(JobStatus.Pending, createdAt: now.AddHours(-2)));
+        var older = await SeedAsync(TestData.Job(JobStatus.Pending, createdAt: now.AddHours(-3)));
+        var fresh = await SeedAsync(TestData.Job(JobStatus.Pending, createdAt: now.AddMinutes(-1)));
+        var running = await SeedAsync(TestData.Job(JobStatus.Running, createdAt: now.AddHours(-3), leaseExpiresAt: now.AddHours(-2)));
+        var cancelRequested = TestData.Job(JobStatus.Pending, createdAt: now.AddHours(-3));
+        cancelRequested.CancellationRequested = true;
+        await SeedAsync(cancelRequested);
+        var ours = new HashSet<Guid> { newer.Id, older.Id, fresh.Id, running.Id, cancelRequested.Id };
+
+        var stale = await WithStoreAsync(store => store.FindStalePendingAsync(TimeSpan.FromHours(1), 1000, default));
+
+        Assert.Equal(
+            [new StalePendingJob(older.Id, older.CorrelationId, older.CreatedAt), new StalePendingJob(newer.Id, newer.CorrelationId, newer.CreatedAt)],
+            stale.Where(s => ours.Contains(s.JobId)));
+    }
+
     private async Task<CrawlJob> SeedAsync(CrawlJob job)
     {
         await _factory.WithDbAsync(async db =>

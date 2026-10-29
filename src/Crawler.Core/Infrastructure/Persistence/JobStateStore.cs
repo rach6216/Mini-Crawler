@@ -178,6 +178,21 @@ public sealed class JobStateStore(CrawlerDbContext db, TimeProvider clock) : IJo
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyList<StalePendingJob>> FindStalePendingAsync(TimeSpan olderThan, int limit, CancellationToken cancellationToken)
+    {
+        var createdBefore = clock.GetUtcNow() - olderThan;
+
+        // Served by ix_crawl_jobs_status_lease_expires_at (status prefix): Pending jobs are few at any time
+        // because workers claim them within seconds, so filtering and sorting that slice by created_at is cheap.
+        // A dedicated (status, created_at) index is not worth its write cost at this scale.
+        return await db.Jobs.AsNoTracking()
+            .Where(j => j.Status == JobStatus.Pending && j.CreatedAt < createdBefore && !j.CancellationRequested)
+            .OrderBy(j => j.CreatedAt).ThenBy(j => j.Id)
+            .Take(limit)
+            .Select(j => new StalePendingJob(j.Id, j.CorrelationId, j.CreatedAt))
+            .ToListAsync(cancellationToken);
+    }
+
     private IQueryable<CrawlJob> OwnedRunningJob(Guid jobId, string owner) =>
         db.Jobs.Where(j => j.Id == jobId && j.Status == JobStatus.Running && j.LeaseOwner == owner);
 }

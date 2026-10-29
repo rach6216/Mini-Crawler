@@ -46,13 +46,10 @@ public sealed class JobMessageHandler(
             return MessageDisposition.DeadLetter;
         }
 
-        using var scope = logger.BeginScope(new Dictionary<string, object?>
-        {
-            ["MessageId"] = message.MessageId,
-            ["JobId"] = message.JobId,
-            ["CorrelationId"] = message.CorrelationId,
-            ["Attempt"] = delivery.Attempt,
-        });
+        // A message-template scope makes the JSON formatter emit JobId/CorrelationId/MessageId/Attempt as named
+        // properties instead of the scope object's ToString().
+        using var scope = logger.BeginScope("Job {JobId} Correlation {CorrelationId} Message {MessageId} Attempt {Attempt}",
+            message.JobId, message.CorrelationId, message.MessageId, delivery.Attempt);
 
         // The owner id is per process, so a duplicate delivered to this same process would pass the lease check.
         if (!inFlightJobs.TryEnter(message.JobId))
@@ -169,7 +166,4 @@ public sealed class JobMessageHandler(
 
         return MessageDisposition.DeadLetter;
     }
-
-    private static string Truncate(string value, int maxLength) =>
-        value.Length <= maxLength ? value : value[..maxLength];
 }

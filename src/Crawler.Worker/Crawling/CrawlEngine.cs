@@ -1,3 +1,4 @@
+using System.Net;
 using Crawler.Core.Application.Abstractions;
 using Crawler.Core.Application.Options;
 using Crawler.Core.Domain;
@@ -17,7 +18,7 @@ public interface ICrawlEngine
 }
 
 /// <summary>
-/// Level-synchronous BFS resumed from the durable frontier (D3, D4). Fetches within a level run
+/// Level-synchronous BFS resumed from the durable frontier. Fetches within a level run
 /// concurrently through a sliding window, but results are persisted strictly in page order so
 /// discovery order and parent assignment are deterministic. Each page is persisted with its children,
 /// edges and counter delta in one transaction guarded by lease ownership. robots.txt is evaluated once per
@@ -147,13 +148,13 @@ public sealed class CrawlEngine(
         {
             case PageFetchOutcome.Html:
                 links = linkExtractor.Extract(result.Html ?? string.Empty, result.FinalUrl);
-                page.MarkFetched(result.HttpStatusCode ?? 200, DomainLinkRatio.Calculate(links, job.StartingHost), now);
+                page.MarkFetched(result.HttpStatusCode ?? (int)HttpStatusCode.OK, DomainLinkRatio.Calculate(links, job.StartingHost), now);
                 break;
             case PageFetchOutcome.Skipped:
-                page.MarkSkipped(result.HttpStatusCode, result.Error ?? "Skipped", now);
+                page.MarkSkipped(result.HttpStatusCode, FitErrorColumn(result.Error ?? "Skipped"), now);
                 break;
             default:
-                page.MarkFailed(result.HttpStatusCode, result.Error ?? "Failed", now);
+                page.MarkFailed(result.HttpStatusCode, FitErrorColumn(result.Error ?? "Failed"), now);
                 break;
         }
 
@@ -250,6 +251,10 @@ public sealed class CrawlEngine(
 
         return new Frontier(pages);
     }
+
+    // Error texts embed exception messages of arbitrary length; an overlong one must not fail the page transaction.
+    private static string FitErrorColumn(string error) =>
+        error.Length <= CrawlerDbContext.ErrorTextMaxLength ? error : error[..CrawlerDbContext.ErrorTextMaxLength];
 
     /// <summary>Distinct targets in first-seen order with their occurrence counts.</summary>
     private static List<(Uri Target, int Occurrences)> AggregateTargets(IReadOnlyList<Uri> links)

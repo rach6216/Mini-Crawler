@@ -17,6 +17,14 @@ public static class RabbitMqTopology
     public const string AttemptHeader = "x-attempt";
     public const string JsonContentType = "application/json";
 
+    /// <summary>Attempt number of a message's first delivery; also assumed when the header is missing or unreadable.</summary>
+    public const int FirstAttempt = 1;
+
+    // RabbitMQ queue arguments (dead-lettering and per-queue message TTL).
+    private const string DeadLetterExchangeArgument = "x-dead-letter-exchange";
+    private const string DeadLetterRoutingKeyArgument = "x-dead-letter-routing-key";
+    private const string MessageTtlArgument = "x-message-ttl";
+
     public static async Task DeclareAsync(IChannel channel, TimeSpan retryDelay, CancellationToken cancellationToken)
     {
         await channel.ExchangeDeclareAsync(Exchange, ExchangeType.Direct, durable: true, autoDelete: false, cancellationToken: cancellationToken);
@@ -25,7 +33,7 @@ public static class RabbitMqTopology
         await channel.QueueDeclareAsync(JobsQueue, durable: true, exclusive: false, autoDelete: false,
             arguments: new Dictionary<string, object?>
             {
-                ["x-dead-letter-exchange"] = DeadLetterExchange,
+                [DeadLetterExchangeArgument] = DeadLetterExchange,
             },
             cancellationToken: cancellationToken);
         await channel.QueueBindAsync(JobsQueue, Exchange, JobsQueue, cancellationToken: cancellationToken);
@@ -33,9 +41,9 @@ public static class RabbitMqTopology
         await channel.QueueDeclareAsync(RetryQueue, durable: true, exclusive: false, autoDelete: false,
             arguments: new Dictionary<string, object?>
             {
-                ["x-message-ttl"] = (int)retryDelay.TotalMilliseconds,
-                ["x-dead-letter-exchange"] = Exchange,
-                ["x-dead-letter-routing-key"] = JobsQueue,
+                [MessageTtlArgument] = (int)retryDelay.TotalMilliseconds,
+                [DeadLetterExchangeArgument] = Exchange,
+                [DeadLetterRoutingKeyArgument] = JobsQueue,
             },
             cancellationToken: cancellationToken);
         await channel.QueueBindAsync(RetryQueue, Exchange, RetryQueue, cancellationToken: cancellationToken);
@@ -49,7 +57,7 @@ public static class RabbitMqTopology
     {
         if (properties.Headers is null || !properties.Headers.TryGetValue(AttemptHeader, out var raw) || raw is null)
         {
-            return 1;
+            return FirstAttempt;
         }
 
         return raw switch
@@ -59,7 +67,7 @@ public static class RabbitMqTopology
             short s => s,
             byte b => b,
             byte[] bytes when int.TryParse(System.Text.Encoding.UTF8.GetString(bytes), out var parsed) => parsed,
-            _ => 1,
+            _ => FirstAttempt,
         };
     }
 }

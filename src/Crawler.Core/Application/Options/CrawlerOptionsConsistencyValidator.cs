@@ -22,6 +22,21 @@ public sealed class CrawlerOptionsConsistencyValidator : IValidateOptions<Crawle
                 $"({options.Worker.LeaseRenewSeconds}) so that a missed heartbeat does not lose the lease.");
         }
 
+        if (options.Http.ConnectTimeoutSeconds > options.Http.TimeoutSeconds)
+        {
+            failures.Add("Crawler:Http:ConnectTimeoutSeconds must not exceed TimeoutSeconds (the per-attempt timeout already covers the connect).");
+        }
+
+        if (options.Worker.ReconnectInitialDelaySeconds > options.Worker.ReconnectMaxDelaySeconds)
+        {
+            failures.Add("Crawler:Worker:ReconnectInitialDelaySeconds must not exceed ReconnectMaxDelaySeconds.");
+        }
+
+        if (options.Outbox.PollIntervalSeconds > options.Outbox.MaxBackoffSeconds)
+        {
+            failures.Add("Crawler:Outbox:PollIntervalSeconds must not exceed MaxBackoffSeconds.");
+        }
+
         if (options.Limits.DefaultMaxDepth > options.Limits.MaxAllowedDepth)
         {
             failures.Add("Crawler:Limits:DefaultMaxDepth must not exceed MaxAllowedDepth.");

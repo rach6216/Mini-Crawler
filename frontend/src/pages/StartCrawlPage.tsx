@@ -7,10 +7,11 @@ import type { CreateJobRequest } from '../api/types';
 import { Alert } from '../components/Alert';
 import { Card } from '../components/Card';
 import { Spinner } from '../components/Spinner';
+import { DEFAULT_MAX_DEPTH, DEFAULT_MAX_PAGES, MAX_DEPTH_LIMIT, MAX_PAGES_LIMIT, MIN_DEPTH, MIN_PAGES } from '../config';
 
 const LIMITS = {
-  depth: { min: 0, max: 5, default: 2 },
-  pages: { min: 1, max: 1000, default: 200 },
+  depth: { min: MIN_DEPTH, max: MAX_DEPTH_LIMIT, default: DEFAULT_MAX_DEPTH },
+  pages: { min: MIN_PAGES, max: MAX_PAGES_LIMIT, default: DEFAULT_MAX_PAGES },
 } as const;
 
 type Field = 'url' | 'maxDepth' | 'maxPages';

@@ -1,5 +1,6 @@
 using System.Text;
 using Crawler.Core.Application.Abstractions;
+using Crawler.Core.Application.Options;
 using Crawler.Core.Domain;
 using Crawler.Core.Infrastructure.Crawling;
 using Crawler.Worker.Crawling;
@@ -116,7 +117,7 @@ public sealed class RobotsTxtCrawlTests(PostgresFixture postgres) : IAsyncLifeti
     public async Task Robots_txt_beyond_500_KiB_is_ignored()
     {
         var padding = new StringBuilder("User-agent: *\n");
-        while (padding.Length < RobotsPolicyProvider.MaxRobotsBytes)
+        while (padding.Length < new HttpOptions().MaxRobotsBytes)
         {
             padding.Append("# padding line to push the next rule past the RFC 9309 parsing limit\n");
         }

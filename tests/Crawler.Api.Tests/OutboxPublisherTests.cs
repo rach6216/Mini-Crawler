@@ -5,6 +5,7 @@ using System.Text.Json;
 using Crawler.Api.Tests.Infrastructure;
 using Crawler.Core.Application.Contracts;
 using Crawler.Core.Application.Messaging;
+using Crawler.Core.Application.Options;
 using Crawler.Core.Domain;
 using Crawler.Core.Infrastructure.Messaging;
 using Crawler.Core.Infrastructure.Outbox;
@@ -119,7 +120,7 @@ public sealed class OutboxPublisherTests(InfrastructureFixture infrastructure)
     [InlineData(50, 30)]
     public void Backoff_doubles_per_failure_and_is_capped(int failures, int expectedSeconds)
     {
-        Assert.Equal(TimeSpan.FromSeconds(expectedSeconds), OutboxPublisherService.Backoff(TimeSpan.FromSeconds(2), failures));
+        Assert.Equal(TimeSpan.FromSeconds(expectedSeconds), OutboxPublisherService.Backoff(new OutboxOptions { PollIntervalSeconds = 2 }, failures));
     }
 
     [Fact]

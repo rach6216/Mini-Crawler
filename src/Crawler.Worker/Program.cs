@@ -10,7 +10,7 @@ if (!builder.Environment.IsDevelopment())
     {
         console.IncludeScopes = true;
         console.UseUtcTimestamp = true;
-        console.TimestampFormat = "yyyy-MM-ddTHH:mm:ss.fffZ ";
+        console.TimestampFormat = "yyyy-MM-ddTHH:mm:ss.fffZ";
     });
 }
 

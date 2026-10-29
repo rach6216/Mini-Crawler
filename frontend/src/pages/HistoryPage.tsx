@@ -2,6 +2,7 @@ import { AlertTriangle, ChevronLeft, ChevronRight, Inbox, Plus } from 'lucide-re
 import type { MouseEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useJobs } from '../api/queries';
+import { HISTORY_PAGE_SIZE } from '../config';
 import { isTerminal, type JobSummaryDto } from '../api/types';
 import { Card } from '../components/Card';
 import { EmptyState } from '../components/EmptyState';
@@ -12,7 +13,6 @@ import { StatusBadge } from '../components/StatusBadge';
 import { formatCount, formatDateTime, formatDuration, formatRelative } from '../lib/format';
 import { useNow } from '../lib/useNow';
 
-const HISTORY_PAGE_SIZE = 20;
 const RELATIVE_TICK_MS = 15_000;
 const SKELETON_ROWS = 6;
 

@@ -20,8 +20,10 @@ public sealed class HttpPageFetcher(
     IRetryDelay retryDelay,
     ILogger<HttpPageFetcher> logger) : IPageFetcher
 {
+    /// <summary>Prefers the media types in <see cref="HtmlMediaTypes"/>; anything else is skipped after the headers arrive.</summary>
     public const string AcceptHeader = "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1";
 
+    // Streaming read chunk; the response size limit is enforced separately (HttpOptions.MaxResponseBytes).
     private const int ReadBufferSize = 16 * 1024;
 
     private static readonly HashSet<HttpStatusCode> TransientStatusCodes =
@@ -34,15 +36,7 @@ public sealed class HttpPageFetcher(
         HttpStatusCode.GatewayTimeout,
     ];
 
-    private static readonly HashSet<HttpStatusCode> RedirectStatusCodes =
-    [
-        HttpStatusCode.MovedPermanently,
-        HttpStatusCode.Found,
-        HttpStatusCode.SeeOther,
-        HttpStatusCode.TemporaryRedirect,
-        HttpStatusCode.PermanentRedirect,
-    ];
-
+    // The only media types the link extractor can parse; widening this list would feed non-HTML bodies to it.
     private static readonly HashSet<string> HtmlMediaTypes = new(StringComparer.OrdinalIgnoreCase)
     {
         "text/html",
@@ -109,7 +103,7 @@ public sealed class HttpPageFetcher(
 
             if (attempt < http.MaxAttempts)
             {
-                var delay = TimeSpan.FromMilliseconds(http.RetryBaseDelayMilliseconds * Math.Pow(2, attempt - 1));
+                var delay = HttpProtocol.RetryDelay(http, attempt);
                 logger.LogDebug("Transient failure fetching {Url} on attempt {Attempt}: {Reason}; retrying in {Delay}",
                     url, attempt, transient.Reason, delay);
                 await retryDelay.WaitAsync(delay, cancellationToken);
@@ -127,8 +121,8 @@ public sealed class HttpPageFetcher(
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.TryAddWithoutValidation("User-Agent", http.UserAgent);
-            request.Headers.TryAddWithoutValidation("Accept", AcceptHeader);
+            request.Headers.TryAddWithoutValidation(HttpProtocol.UserAgentHeader, http.UserAgent);
+            request.Headers.TryAddWithoutValidation(HttpProtocol.AcceptHeader, AcceptHeader);
 
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, attemptCts.Token);
             var status = (int)response.StatusCode;
@@ -138,7 +132,7 @@ public sealed class HttpPageFetcher(
                 return new AttemptOutcome.Transient(status, $"HTTP {status}");
             }
 
-            if (RedirectStatusCodes.Contains(response.StatusCode))
+            if (HttpProtocol.RedirectStatusCodes.Contains(response.StatusCode))
             {
                 return new AttemptOutcome.Redirect(status, response.Headers.Location);
             }

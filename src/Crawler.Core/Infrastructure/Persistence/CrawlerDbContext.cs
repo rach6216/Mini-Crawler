@@ -5,6 +5,9 @@ namespace Crawler.Core.Infrastructure.Persistence;
 
 public sealed class CrawlerDbContext(DbContextOptions<CrawlerDbContext> options) : DbContext(options)
 {
+    /// <summary>Column length of every free-text error/reason column; writers truncate to it.</summary>
+    public const int ErrorTextMaxLength = 2000;
+
     public DbSet<CrawlJob> Jobs => Set<CrawlJob>();
     public DbSet<CrawlPage> Pages => Set<CrawlPage>();
     public DbSet<CrawlEdge> Edges => Set<CrawlEdge>();
@@ -20,7 +23,7 @@ public sealed class CrawlerDbContext(DbContextOptions<CrawlerDbContext> options)
             job.Property(j => j.InputUrl).IsRequired();
             job.Property(j => j.NormalizedStartUrl).IsRequired();
             job.Property(j => j.StartingHost).IsRequired().HasMaxLength(253);
-            job.Property(j => j.FailureReason).HasMaxLength(2000);
+            job.Property(j => j.FailureReason).HasMaxLength(ErrorTextMaxLength);
             job.Property(j => j.LeaseOwner).HasMaxLength(128);
             job.HasMany(j => j.Pages).WithOne().HasForeignKey(p => p.JobId).OnDelete(DeleteBehavior.Cascade);
             // History listing: newest first with a deterministic tie-breaker.
@@ -35,7 +38,7 @@ public sealed class CrawlerDbContext(DbContextOptions<CrawlerDbContext> options)
             page.HasKey(p => p.Id);
             page.Property(p => p.FetchStatus).HasConversion<string>().HasMaxLength(16);
             page.Property(p => p.NormalizedUrl).IsRequired();
-            page.Property(p => p.ErrorMessage).HasMaxLength(2000);
+            page.Property(p => p.ErrorMessage).HasMaxLength(ErrorTextMaxLength);
             page.HasOne<CrawlPage>().WithMany().HasForeignKey(p => p.ParentPageId).OnDelete(DeleteBehavior.Restrict);
             // Idempotency: a normalized URL is processed at most once per job.
             page.HasIndex(p => new { p.JobId, p.NormalizedUrl }).IsUnique().HasDatabaseName("ux_crawl_pages_job_id_normalized_url");
@@ -63,7 +66,7 @@ public sealed class CrawlerDbContext(DbContextOptions<CrawlerDbContext> options)
             outbox.HasKey(o => o.Id);
             outbox.Property(o => o.MessageType).IsRequired().HasMaxLength(64);
             outbox.Property(o => o.Payload).IsRequired();
-            outbox.Property(o => o.LastError).HasMaxLength(2000);
+            outbox.Property(o => o.LastError).HasMaxLength(ErrorTextMaxLength);
             // The publisher only ever scans unpublished rows.
             outbox.HasIndex(o => o.CreatedAt).HasFilter("published_at IS NULL").HasDatabaseName("ix_outbox_messages_unpublished");
         });

@@ -4,7 +4,10 @@ using Crawler.Api.Infrastructure;
 using Crawler.Api.Services;
 using Crawler.Core.Infrastructure;
 using Crawler.Core.Infrastructure.Outbox;
+using Microsoft.AspNetCore.Cors.Infrastructure;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Options;
+using Microsoft.Net.Http.Headers;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -31,6 +34,11 @@ builder.Services.AddOptions<DatabaseOptions>()
     .Bind(builder.Configuration.GetSection(DatabaseOptions.SectionName))
     .ValidateDataAnnotations()
     .ValidateOnStart();
+builder.Services.AddOptions<PagingOptions>()
+    .Bind(builder.Configuration.GetSection(PagingOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<PagingOptions>, PagingOptionsValidator>();
 // Registered before the outbox publisher so the schema exists before any background work starts.
 builder.Services.AddHostedService<DatabaseMigrationService>();
 
@@ -57,20 +65,23 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 });
 builder.Services.AddProblemDetails();
 
-const string FrontendCorsPolicy = "frontend";
-var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
-                     ?? ["http://localhost:5173", "http://localhost:3000"];
-builder.Services.AddCors(o => o.AddPolicy(FrontendCorsPolicy, policy => policy
-    .WithOrigins(allowedOrigins)
-    .AllowAnyHeader()
-    .WithMethods("GET", "POST")
-    .WithExposedHeaders("Location")));
+builder.Services.AddOptions<FrontendCorsOptions>()
+    .Bind(builder.Configuration.GetSection(FrontendCorsOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+builder.Services.AddCors();
+builder.Services.AddOptions<CorsOptions>()
+    .Configure<IOptions<FrontendCorsOptions>>((cors, frontend) => cors.AddPolicy(FrontendCorsOptions.PolicyName, policy => policy
+        .WithOrigins(frontend.Value.AllowedOrigins)
+        .AllowAnyHeader()
+        .WithMethods(HttpMethods.Get, HttpMethods.Post)
+        .WithExposedHeaders(HeaderNames.Location)));
 
 var app = builder.Build();
 
 app.UseExceptionHandler();
 app.UseStatusCodePages();
-app.UseCors(FrontendCorsPolicy);
+app.UseCors(FrontendCorsOptions.PolicyName);
 
 app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
 app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = r => r.Tags.Contains("ready") });

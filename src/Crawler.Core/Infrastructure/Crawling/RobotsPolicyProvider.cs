@@ -1,5 +1,4 @@
 using System.Buffers;
-using System.Net;
 using System.Text;
 using Crawler.Core.Application.Abstractions;
 using Crawler.Core.Application.Options;
@@ -20,23 +19,15 @@ public sealed class RobotsPolicyProvider(
     IRetryDelay retryDelay,
     ILogger<RobotsPolicyProvider> logger) : IRobotsPolicyProvider
 {
-    /// <summary>RFC 9309 §2.5: crawlers must parse at least 500 KiB; content beyond is ignored.</summary>
-    public const int MaxRobotsBytes = 500 * 1024;
+    public const string RobotsPath = "/robots.txt";
 
+    /// <summary>RFC 9309 §2.3: robots.txt is served as text/plain.</summary>
     public const string AcceptHeader = "text/plain,*/*;q=0.1";
 
+    // Streaming read chunk; the parse limit is HttpOptions.MaxRobotsBytes.
     private const int ReadBufferSize = 16 * 1024;
 
     private static readonly char[] ProductTokenSeparators = ['/', ' '];
-
-    private static readonly HashSet<HttpStatusCode> RedirectStatusCodes =
-    [
-        HttpStatusCode.MovedPermanently,
-        HttpStatusCode.Found,
-        HttpStatusCode.SeeOther,
-        HttpStatusCode.TemporaryRedirect,
-        HttpStatusCode.PermanentRedirect,
-    ];
 
     public async Task<RobotsDecision> GetAsync(Uri startUrl, CancellationToken cancellationToken)
     {
@@ -48,7 +39,7 @@ public sealed class RobotsPolicyProvider(
             return RobotsDecision.AllowAll;
         }
 
-        var outcome = await FetchAsync(new Uri(startUrl, "/robots.txt"), startUrl.Host, http, cancellationToken);
+        var outcome = await FetchAsync(new Uri(startUrl, RobotsPath), startUrl.Host, http, cancellationToken);
         switch (outcome)
         {
             case Outcome.Content content:
@@ -121,7 +112,7 @@ public sealed class RobotsPolicyProvider(
 
             if (attempt < http.MaxAttempts)
             {
-                var delay = TimeSpan.FromMilliseconds(http.RetryBaseDelayMilliseconds * Math.Pow(2, attempt - 1));
+                var delay = HttpProtocol.RetryDelay(http, attempt);
                 logger.LogDebug("Transient failure fetching {Url} on attempt {Attempt}: {Reason}; retrying in {Delay}",
                     url, attempt, unreachable.Reason, delay);
                 await retryDelay.WaitAsync(delay, cancellationToken);
@@ -139,18 +130,18 @@ public sealed class RobotsPolicyProvider(
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.TryAddWithoutValidation("User-Agent", http.UserAgent);
-            request.Headers.TryAddWithoutValidation("Accept", AcceptHeader);
+            request.Headers.TryAddWithoutValidation(HttpProtocol.UserAgentHeader, http.UserAgent);
+            request.Headers.TryAddWithoutValidation(HttpProtocol.AcceptHeader, AcceptHeader);
 
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, attemptCts.Token);
             var status = (int)response.StatusCode;
 
-            if (RedirectStatusCodes.Contains(response.StatusCode))
+            if (HttpProtocol.RedirectStatusCodes.Contains(response.StatusCode))
             {
                 return new Outcome.Redirect(status, response.Headers.Location);
             }
 
-            if (status >= 500)
+            if (status >= HttpProtocol.FirstServerErrorStatus)
             {
                 return new Outcome.Unreachable($"HTTP {status}", Retryable: true);
             }
@@ -160,7 +151,7 @@ public sealed class RobotsPolicyProvider(
                 return new Outcome.Missing($"HTTP {status}");
             }
 
-            return new Outcome.Content(await ReadTruncatedAsync(response, attemptCts.Token));
+            return new Outcome.Content(await ReadTruncatedAsync(response, http.MaxRobotsBytes, attemptCts.Token));
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -185,7 +176,7 @@ public sealed class RobotsPolicyProvider(
         }
     }
 
-    private static async Task<string> ReadTruncatedAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    private static async Task<string> ReadTruncatedAsync(HttpResponseMessage response, int maxBytes, CancellationToken cancellationToken)
     {
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var body = new MemoryStream();
@@ -196,7 +187,7 @@ public sealed class RobotsPolicyProvider(
             int read;
             while ((read = await stream.ReadAsync(buffer.AsMemory(0, ReadBufferSize), cancellationToken)) > 0)
             {
-                var take = (int)Math.Min(read, MaxRobotsBytes - body.Length);
+                var take = (int)Math.Min(read, maxBytes - body.Length);
                 body.Write(buffer, 0, take);
                 if (take < read)
                 {

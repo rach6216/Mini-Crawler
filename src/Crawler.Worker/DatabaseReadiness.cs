@@ -1,5 +1,7 @@
+using Crawler.Core.Application.Options;
 using Crawler.Core.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace Crawler.Worker;
 
@@ -7,10 +9,12 @@ namespace Crawler.Worker;
 /// The API owns migrations; the worker waits until the database is reachable and fully migrated
 /// before touching it, so a fresh `docker compose up` does not race the schema.
 /// </summary>
-public sealed class DatabaseReadiness(IServiceScopeFactory scopeFactory, TimeProvider clock, ILogger<DatabaseReadiness> logger)
+public sealed class DatabaseReadiness(
+    IServiceScopeFactory scopeFactory,
+    IOptions<CrawlerOptions> options,
+    TimeProvider clock,
+    ILogger<DatabaseReadiness> logger)
 {
-    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(3);
-
     private readonly SemaphoreSlim _gate = new(1, 1);
     private volatile bool _ready;
 
@@ -35,7 +39,7 @@ public sealed class DatabaseReadiness(IServiceScopeFactory scopeFactory, TimePro
                 }
 
                 logger.LogWarning("Waiting for the database: {Problem}", problem);
-                await Task.Delay(PollInterval, clock, cancellationToken);
+                await Task.Delay(TimeSpan.FromSeconds(options.Value.Worker.DatabaseReadinessPollSeconds), clock, cancellationToken);
             }
         }
         finally

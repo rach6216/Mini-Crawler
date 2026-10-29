@@ -1,6 +1,5 @@
 import type { TreeNodeDto } from '../api/types';
-
-export const DEFAULT_EXPANDED_DEPTH = 1;
+import { TREE_DEFAULT_EXPANDED_DEPTH } from '../config';
 
 export interface VisibleRow {
   node: TreeNodeDto;
@@ -43,7 +42,7 @@ export function flattenVisible(root: TreeNodeDto | null | undefined, expanded: R
 }
 
 /** pageIds of nodes with children whose level is below `depth` (depth 1 => only the root is expanded). */
-export function expandedToDepth(root: TreeNodeDto | null | undefined, depth: number = DEFAULT_EXPANDED_DEPTH): Set<string> {
+export function expandedToDepth(root: TreeNodeDto | null | undefined, depth: number = TREE_DEFAULT_EXPANDED_DEPTH): Set<string> {
   const ids = new Set<string>();
   if (!root) return ids;
   const stack: Array<{ node: TreeNodeDto; level: number }> = [{ node: root, level: 0 }];

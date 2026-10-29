@@ -19,10 +19,6 @@ public sealed class JobConsumer(
     TimeProvider clock,
     ILogger<JobConsumer> logger) : BackgroundService
 {
-    private static readonly TimeSpan InitialReconnectDelay = TimeSpan.FromSeconds(1);
-    private static readonly TimeSpan MaxReconnectDelay = TimeSpan.FromSeconds(30);
-    private static readonly TimeSpan RequeueDelay = TimeSpan.FromSeconds(5);
-
     private readonly object _inFlightLock = new();
     private readonly HashSet<Task> _inFlight = [];
 
@@ -37,13 +33,16 @@ public sealed class JobConsumer(
             return;
         }
 
-        var reconnectDelay = InitialReconnectDelay;
+        var worker = options.Value.Worker;
+        var initialReconnectDelay = TimeSpan.FromSeconds(worker.ReconnectInitialDelaySeconds);
+        var maxReconnectDelay = TimeSpan.FromSeconds(worker.ReconnectMaxDelaySeconds);
+        var reconnectDelay = initialReconnectDelay;
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
                 await ConsumeUntilChannelClosesAsync(stoppingToken);
-                reconnectDelay = InitialReconnectDelay;
+                reconnectDelay = initialReconnectDelay;
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -63,7 +62,8 @@ public sealed class JobConsumer(
                 break;
             }
 
-            reconnectDelay = TimeSpan.FromTicks(Math.Min(reconnectDelay.Ticks * 2, MaxReconnectDelay.Ticks));
+            reconnectDelay = TimeSpan.FromSeconds(
+                Math.Min(reconnectDelay.TotalSeconds * worker.ReconnectBackoffMultiplier, maxReconnectDelay.TotalSeconds));
         }
     }
 
@@ -128,12 +128,14 @@ public sealed class JobConsumer(
             }
             else
             {
-                logger.LogError(ex, "Message {MessageId} could not be handled; returning it to the queue after {Delay}s", properties.MessageId, RequeueDelay.TotalSeconds);
+                var requeueDelay = TimeSpan.FromSeconds(options.Value.Worker.RequeueDelaySeconds);
+                logger.LogError(ex, "Message {MessageId} could not be handled; returning it to the queue after {DelaySeconds}s",
+                    properties.MessageId, requeueDelay.TotalSeconds);
                 // A requeue is redelivered immediately; without a pause a persistent publish failure would spin.
                 // The database attempt cap (TryFailExhaustedAsync) bounds how many times this can recur per job.
                 try
                 {
-                    await Task.Delay(RequeueDelay, channelToken);
+                    await Task.Delay(requeueDelay, clock, channelToken);
                 }
                 catch (OperationCanceledException)
                 {

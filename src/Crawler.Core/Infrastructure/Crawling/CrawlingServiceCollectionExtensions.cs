@@ -12,8 +12,6 @@ public static class CrawlingServiceCollectionExtensions
 {
     public const string HttpClientName = "crawler";
 
-    private static readonly TimeSpan PooledConnectionLifetime = TimeSpan.FromMinutes(2);
-
     /// <summary>
     /// Registers the SSRF-safe HTTP fetcher, the robots.txt policy provider and the link extractor. Options and the clock come from
     /// <see cref="CoreServiceCollectionExtensions.AddCrawlerCore"/>.
@@ -46,10 +44,10 @@ public static class CrawlingServiceCollectionExtensions
                     // A proxy would receive the connection instead of the validated address.
                     UseProxy = false,
                     AutomaticDecompression = DecompressionMethods.All,
-                    ConnectTimeout = TimeSpan.FromSeconds(http.TimeoutSeconds),
+                    ConnectTimeout = TimeSpan.FromSeconds(http.ConnectTimeoutSeconds),
                     // Abandoned bodies (non-HTML, oversized) are not drained; the connection is dropped instead.
                     MaxResponseDrainSize = 0,
-                    PooledConnectionLifetime = PooledConnectionLifetime,
+                    PooledConnectionLifetime = TimeSpan.FromSeconds(http.PooledConnectionLifetimeSeconds),
                     ConnectCallback = connect.ConnectAsync,
                 };
             });

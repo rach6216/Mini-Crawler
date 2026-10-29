@@ -2,6 +2,8 @@ namespace Crawler.Core.Domain;
 
 public static class JobProgress
 {
+    public const int CompletePercent = 100;
+
     /// <summary>
     /// Terminal jobs report 100 regardless of counters. While running, the percentage is relative to
     /// the pages that currently hold a slot, so it can dip when a level discovers many new pages.
@@ -10,7 +12,7 @@ public static class JobProgress
     {
         if (JobStateMachine.IsTerminal(status))
         {
-            return 100;
+            return CompletePercent;
         }
 
         if (discoveredPages <= 0 || processedPages <= 0)
@@ -18,6 +20,6 @@ public static class JobProgress
             return 0;
         }
 
-        return Math.Min(100, (int)((long)processedPages * 100 / discoveredPages));
+        return Math.Min(CompletePercent, (int)((long)processedPages * CompletePercent / discoveredPages));
     }
 }

@@ -2,6 +2,7 @@ using Crawler.Core.Application.Abstractions;
 using Crawler.Core.Application.Messaging;
 using Crawler.Core.Application.Options;
 using Crawler.Core.Domain;
+using Crawler.Core.Infrastructure.Messaging;
 using Crawler.Core.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -26,12 +27,13 @@ public sealed class OutboxPublisherService(
     TimeProvider clock,
     ILogger<OutboxPublisherService> logger) : BackgroundService
 {
-    internal const int MaxErrorLength = 2000;
-    internal static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(30);
+    // Keeps Math.Pow finite for any multiplier the options allow; the result is capped by MaxBackoffSeconds anyway.
+    private const int MaxBackoffExponent = 16;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var pollInterval = TimeSpan.FromSeconds(options.Value.Outbox.PollIntervalSeconds);
+        var outbox = options.Value.Outbox;
+        var pollInterval = TimeSpan.FromSeconds(outbox.PollIntervalSeconds);
         var consecutiveFailures = 0;
 
         while (!stoppingToken.IsCancellationRequested)
@@ -57,7 +59,7 @@ public sealed class OutboxPublisherService(
                 if (result is null || result.Failed > 0)
                 {
                     consecutiveFailures++;
-                    var backoff = Backoff(pollInterval, consecutiveFailures);
+                    var backoff = Backoff(outbox, consecutiveFailures);
                     logger.LogWarning("Outbox publishing failed; next round in {BackoffSeconds}s (consecutive failures: {ConsecutiveFailures})",
                         backoff.TotalSeconds, consecutiveFailures);
                     await Task.Delay(backoff, clock, stoppingToken);
@@ -65,7 +67,7 @@ public sealed class OutboxPublisherService(
                 }
 
                 consecutiveFailures = 0;
-                if (result.Selected >= options.Value.Outbox.BatchSize)
+                if (result.Selected >= outbox.BatchSize)
                 {
                     // A full batch means more rows are probably waiting; drain without sleeping.
                     continue;
@@ -80,12 +82,12 @@ public sealed class OutboxPublisherService(
         }
     }
 
-    /// <summary>Poll interval doubled per consecutive failed round, capped at <see cref="MaxBackoff"/>.</summary>
-    internal static TimeSpan Backoff(TimeSpan pollInterval, int consecutiveFailures)
+    /// <summary>Poll interval × BackoffMultiplier per consecutive failed round, capped at MaxBackoffSeconds.</summary>
+    internal static TimeSpan Backoff(OutboxOptions outbox, int consecutiveFailures)
     {
-        var exponent = Math.Clamp(consecutiveFailures - 1, 0, 16);
-        var seconds = pollInterval.TotalSeconds * Math.Pow(2, exponent);
-        return TimeSpan.FromSeconds(Math.Min(seconds, MaxBackoff.TotalSeconds));
+        var exponent = Math.Clamp(consecutiveFailures - 1, 0, MaxBackoffExponent);
+        var seconds = outbox.PollIntervalSeconds * Math.Pow(outbox.BackoffMultiplier, exponent);
+        return TimeSpan.FromSeconds(Math.Min(seconds, outbox.MaxBackoffSeconds));
     }
 
     /// <summary>One round: lock a batch, publish in creation order, record outcomes, commit.</summary>
@@ -134,7 +136,7 @@ public sealed class OutboxPublisherService(
 
             try
             {
-                await publisher.PublishAsync(message, attempt: 1, JobQueue.Main, cancellationToken);
+                await publisher.PublishAsync(message, RabbitMqTopology.FirstAttempt, JobQueue.Main, cancellationToken);
                 row.PublishedAt = clock.GetUtcNow();
                 published++;
             }
@@ -159,6 +161,6 @@ public sealed class OutboxPublisherService(
     private static void RecordFailure(OutboxMessage row, string error)
     {
         row.PublishAttempts++;
-        row.LastError = error.Length <= MaxErrorLength ? error : error[..MaxErrorLength];
+        row.LastError = error.Length <= CrawlerDbContext.ErrorTextMaxLength ? error : error[..CrawlerDbContext.ErrorTextMaxLength];
     }
 }

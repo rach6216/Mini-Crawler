@@ -81,7 +81,22 @@ python scripts/e2e_smoke.py
 
 ### Configuration
 
-All settings live in `appsettings.json` and can be overridden with environment variables (`Section__Key`). Shared keys (`ConnectionStrings:Postgres`, `RabbitMq:*`, `Crawler:Limits|Http|Security|Worker|Outbox`). API-only keys: `Database:MigrateOnStartup` (default true), `Database:MigrationMaxAttempts` (30) / `MigrationRetryDelaySeconds` (2), `Outbox:Enabled` (true; tests disable the publisher), `Cors:AllowedOrigins` (defaults to the Vite and nginx origins).
+Every tunable lives in validated options; defaults are visible in `appsettings.json` and can be overridden with environment variables (`Section__Key`). The API refuses to start on an invalid or inconsistent value.
+
+| Section | Keys (default) |
+|---------|----------------|
+| `ConnectionStrings` | `Postgres` |
+| `RabbitMq` | `Host`, `Port` (5672), `UserName`, `Password`, `VirtualHost` (/) |
+| `Crawler:Limits` | `DefaultMaxDepth` (2), `MaxAllowedDepth` (5), `DefaultMaxPages` (200), `MaxAllowedPages` (1000) |
+| `Crawler:Http` | `TimeoutSeconds` (10), `ConnectTimeoutSeconds` (10), `MaxAttempts` (3), `RetryBaseDelayMilliseconds` (500), `RetryBackoffMultiplier` (2.0), `MaxRedirects` (5), `MaxResponseBytes` (2 MiB), `MaxRobotsBytes` (500 KiB), `PooledConnectionLifetimeSeconds` (120), `Concurrency` (4), `UserAgent`, `RespectRobotsTxt` (true) |
+| `Crawler:Security` | `TrustedHosts` (empty; `fixture-site` in Docker) |
+| `Crawler:Worker` | `Prefetch` (2), `LeaseSeconds` (60), `LeaseRenewSeconds` (15), `MaxMessageAttempts` (5), `RetryDelaySeconds` (10), `RecoverySweepSeconds` (30), `RecoverySweepBatchSize` (50), `PendingRepublishAfterSeconds` (120), `RepublishCooldownSeconds` (300), `RequeueDelaySeconds` (5), `ReconnectInitialDelaySeconds` (1), `ReconnectMaxDelaySeconds` (30), `ReconnectBackoffMultiplier` (2.0), `DatabaseReadinessPollSeconds` (3) |
+| `Crawler:Outbox` | `PollIntervalSeconds` (2), `BatchSize` (50), `BackoffMultiplier` (2.0), `MaxBackoffSeconds` (30) |
+| API only | `Database:MigrateOnStartup` (true), `Database:MigrationMaxAttempts` (30), `Database:MigrationRetryDelaySeconds` (2), `Api:Paging:DefaultPageSize` (20) / `MaxPageSize` (100) / `DefaultLinksPageSize` (100) / `MaxLinksPageSize` (500), `Cors:AllowedOrigins`, `Outbox:Enabled` (true; tests switch the publisher off) |
+
+Cross-field rules (`CrawlerOptionsConsistencyValidator`): the lease covers at least three heartbeats, connect timeout ≤ attempt timeout, reconnect and outbox backoff bounds are ordered, defaults do not exceed their maxima. Protocol constants (queue and header names, schema version, retryable status codes, HTML media types) are named constants by design, not settings.
+
+Frontend build-time variables (`frontend/src/config.ts`, validated at startup): `VITE_API_BASE_URL`, `VITE_USE_MOCKS`, `VITE_JOB_POLL_INTERVAL_MS` (2000), `VITE_QUERY_RETRY_COUNT` (1), `VITE_QUERY_RETRY_DELAY_MS` (1000), `VITE_HISTORY_PAGE_SIZE` (20), `VITE_PAGE_LINKS_PAGE_SIZE` (100), `VITE_TREE_DEFAULT_EXPANDED_DEPTH` (1), `VITE_MAX_DEPTH_LIMIT` (5), `VITE_DEFAULT_MAX_DEPTH` (2), `VITE_MAX_PAGES_LIMIT` (1000), `VITE_DEFAULT_MAX_PAGES` (200).
 
 ## 4. API
 
@@ -96,7 +111,10 @@ curl -s localhost:8080/api/jobs/3f2c...            # status, counters, progressP
 curl -s localhost:8080/api/jobs/3f2c.../tree       # spanning tree with ratio per page
 curl -s 'localhost:8080/api/jobs?page=1&pageSize=20'
 curl -s -X POST localhost:8080/api/jobs/3f2c.../cancel   # 202 requested / 200 already canceled / 409 terminal / 404
+curl -s 'localhost:8080/api/jobs/3f2c.../pages/<pageId>/links?page=1&pageSize=100'   # outgoing links of one page
 ```
+
+The links endpoint returns `{ items: [{ targetUrl, occurrenceCount, isInternal, targetPageId, targetFetchStatus }], page, pageSize, totalCount }` ordered by discovery; `pageId` values come from the tree. The UI shows the same list behind a "Links (N)" disclosure on each tree row.
 
 `maxDepth` defaults to 2 (max 5); the optional `maxPages` defaults to 200 (max 1000). Both bounds are server configuration (`Crawler:Limits`).
 
@@ -177,7 +195,7 @@ Several layers, each sufficient on its own for a different failure:
 
 1. Worker claims the job (lease 60 s, renewed by a heartbeat every 15 s while the crawl runs) and starts persisting pages.
 2. Worker dies mid-crawl. RabbitMQ redelivers the unacked message immediately; another worker sees an unexpired lease and acknowledges it (the job is still owned).
-3. `LeaseRecoveryService` in every worker scans `status='Running' AND lease_expires_at < now()` every 30 s and republishes a job message for each expired lease.
+3. `LeaseRecoveryService` in every worker scans `status='Running' AND lease_expires_at < now()` every 30 s (`RecoverySweepSeconds`) and republishes a job message for each expired lease. The same sweep republishes jobs still `Pending` two minutes after creation (`PendingRepublishAfterSeconds`), which covers a lost or purged message; each job is republished at most once per `RepublishCooldownSeconds` per worker, and duplicates are acknowledged harmlessly.
 4. The new owner claims the job (`Running → Running`, `attempts + 1`) and resumes from the frontier (section 10). Final counts equal those of an uninterrupted run.
 
 Recovery latency is bounded by the lease duration plus the sweep interval (≤ 90 s with defaults). The behaviour is covered by integration test W6 (`tests/Crawler.Worker.Tests`) and exercised live by `scripts/e2e_smoke.py --with-crash`, which kills the worker container while it crawls the rate-limited `/slow/` fixture.
@@ -250,8 +268,8 @@ What was executed on 2026-10-28 before submission (Windows 11 host, Docker Deskt
 | Check | Result |
 |-------|--------|
 | `dotnet build Crawler.sln` | succeeded, 0 warnings |
-| `dotnet test Crawler.sln` | 278 passed, 0 failed (Core 156, Worker 66, API 56; Worker/API use PostgreSQL and RabbitMQ Testcontainers) |
-| `npm run build`, `npm test -- --run` | build clean; 25 tests passed |
+| `dotnet test Crawler.sln` | 295 passed, 0 failed (Core 160, Worker 70, API 65; Worker/API use PostgreSQL and RabbitMQ Testcontainers) |
+| `npm run build`, `npm test -- --run` | build clean; 27 tests passed |
 | `npm run test:e2e` (Playwright) | 8 tests passed against the Compose stack |
 | `docker compose up --build` | all six services healthy; migrations applied by the API |
 | `python scripts/e2e_smoke.py --with-recovery --with-crash` | fixture crawl (5 pages, 1 failed, root ratio 0.75, deterministic parents), duplicate delivery leaves rows and counters unchanged, invalid JSON and unknown job land in `crawl.jobs.dlq`, cancel matrix (202/200/409/404), canceled job not revived by its queued message, validation (loopback literal, ftp, depth 9 → 400), history ordering, health endpoints, expired-lease recovery by the sweeper, worker container killed mid-crawl of the slow fixture and the job resumed to 21/21/0 |
